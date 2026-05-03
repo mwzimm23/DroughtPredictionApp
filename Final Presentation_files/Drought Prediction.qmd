@@ -1,0 +1,155 @@
+```{r}
+library(rvest)
+library(httr)
+library(nhdplusTools)
+library(ggplot2)
+library(sf)
+library(dplyr)
+library(readr)
+
+```
+
+Download in the data sets:
+
+1.  Active SNOTEL: Active stations data
+2.  \_\_\_\_\_\_\_\_\_\_\_\_\_\_: 1991-2020 Median SWE data
+3.  \_\_\_\_\_\_\_\_\_\_\_\_\_\_: YTD SWE data
+4.  \_\_\_\_\_\_\_\_\_\_\_\_\_\_: Watershed Map data
+5.  \_\_\_\_\_\_\_\_\_\_\_\_\_\_: Map of USA data
+6.  \_\_\_\_\_\_\_\_\_\_\_\_\_\_: Hydrograph YTD data
+
+```{r}
+##Data Wrangling: 
+
+# Step 1: Pull URL
+url <- "https://wcc.sc.egov.usda.gov/reports/UpdateReport.html?report=Western+US"
+page <- read_html(url)
+
+# Step 2: Pull table
+tables <- html_nodes(page, "table")
+df2 <- html_table(tables[[2]], fill = TRUE)
+View(df2)
+names(df2)[1] <- "name"
+
+##Watershed Data Table (Assistance from AI to find this )
+install.packages(c("nhdplusTools", "ggplot2", "sf", "dplyr"))
+western_huc4 <- get_huc(
+  id = c("1901","1902","1903","1904","1905","1906","1001","1002","1003","1004","1005","1006","1007","1008",
+         "1301","1302","1303","1401","1402","1403","1404","1405","1406","1407",
+         "1501","1502","1503","1504","1505","1506","1507","1508",
+         "1601","1602","1603","1604",
+         "1701","1702","1703","1704","1705","1706","1707","1708",
+         "1801","1802","1803","1804","1805"),
+  type = "huc04"
+)
+
+
+# Basic US state background Data
+us_states <- map_data("state")
+western <- us_states |>
+  filter(region %in% c("oregon","california","nevada","arizona",
+                        "wyoming","colorado","utah","montana","idaho",
+                        "washington","new mexico", "alaska"))
+## I want to make my data into CSV to make it easier so just incase my code breaks this is my safety
+write_csv(df2, "PercentSWE.csv")
+write_csv(western_huc4, "westernhuc4.csv")
+
+##Skipping the first two columns cleans my data also renaming
+PercentSWE <- read.csv("PercentSWE.csv", skip = 2, header = FALSE, stringsAsFactors = FALSE)
+colnames(PercentSWE) <- c("name", "SWE_sites", "SWE_pct_median", "precip_sites", "precip_pct_median", "region")
+
+##Recoding WesternHuc4
+western_huc4 <- western_huc4 |>
+  mutate(name = toupper(name))
+
+##Matching all the names 
+PercentSWE <- PercentSWE |>
+  mutate(name = case_when(
+    name == "GUNNISON RIVER BASIN"                        ~ "GUNNISON",
+    name == "UPPER COLORADO RIVER BASIN"                  ~ "COLORADO HEADWATERS",
+    name == "YAMPA AND WHITE RIVER BASINS"                ~ "WHITE-YAMPA",
+    name == "DIRTY DEVIL"                                 ~ "UPPER COLORADO-DIRTY DEVIL",
+    name == "UPPER RIO GRANDE BASIN"                      ~ "RIO GRANDE HEADWATERS",
+    name == "UPPER RIO GRANDE BASIN - New Mexico"         ~ "RIO GRANDE-ELEPHANT BUTTE",
+    name == "MIMBRES RIVER BASIN"                         ~ "RIO GRANDE-MIMBRES",
+    name == "GILA RIVER BASIN"                            ~ "UPPER GILA",
+    name == "SALT RIVER BASIN"                            ~ "SALT",
+    name == "LITTLE COLORADO RIVER BASIN"                 ~ "LITTLE COLORADO",        
+    name == "SMITH, JUDITH, AND MUSSELSHELL RIVER BASINS" ~ "MISSOURI-MUSSELSHELL",
+    name == "SUN, TETON AND MARIAS RIVER BASINS"          ~ "MISSOURI-MARIAS",
+    name == "MISSOURI MAINSTEM RIVER BASIN"               ~ "MISSOURI-POPLAR",
+    name == "MILK RIVER BASIN"                            ~ "MILK",
+    name == "UPPER YELLOWSTONE RIVER BASIN"               ~ "UPPER YELLOWSTONE",
+    name == "BIGHORN RIVER BASIN (WYOMING)"               ~ "BIG HORN",
+    name == "SAN JUAN RIVER BASIN"                        ~ "UPPER COLORADO-DOLORES",
+    name == "UPPER GREEN RIVER"                           ~ "GREAT DIVIDE-UPPER GREEN",
+    name == "LOWER GREEN RIVER"                           ~ "LOWER GREEN",
+    name == "LOWER SNAKE, WALLA WALLA"                    ~ "LOWER SNAKE",
+    name == "UPPER HUMBOLDT RIVER"                        ~ "BLACK ROCK DESERT-HUMBOLDT",
+    name == "BEAR RIVER"                                  ~ "BEAR",
+    name == "ESCALANTE RIVER"                             ~ "ESCALANTE DESERT-SEVIER LAKE",
+    name == "LOWER PEND OREILLE"                          ~ "KOOTENAI-PEND OREILLE-SPOKANE",
+    name == "UPPER YAKIMA"                                ~ "YAKIMA",
+    name == "CENTRAL COLUMBIA"                            ~ "MIDDLE COLUMBIA",
+    name == "KLAMATH"                                     ~ "KLAMATH-NORTHERN CALIFORNIA COASTAL",
+    name == "NORTHERN GREAT BASIN"                             ~ "GREAT SALT LAKE",        
+    name == "SNAKE BASIN ABOVE PALISADES"                 ~ "UPPER SNAKE",            
+    name == "SNAKE BASIN ABOVE AMERICAN FALLS"            ~ "MIDDLE SNAKE",
+    name == "SOUTHEAST ALASKA BASIN"            ~ "SOUTHEAST ALASKA",
+    name == "SOUTHEAST ALASKA BASIN"            ~ "SOUTH CENTRAL ALASKA",
+    TRUE ~ name
+  ))
+
+##Remove * and ""
+
+PercentSWE <- PercentSWE |>
+  mutate(SWE_pct_median = as.numeric(gsub("\\*", "", SWE_pct_median)))
+
+##Join 
+df_joined <- western_huc4 |>
+  left_join(PercentSWE, by = "name")
+
+
+```
+## Plot
+```{r}
+# Plot - fill by SWE percent of median, gray for unmatched basins
+ggplot() +
+  geom_polygon(data = western, aes(x = long, y = lat, group = group),
+               fill = "gray90", color = "white") +
+  geom_sf(data = df_joined, aes(fill = SWE_pct_median),
+          color = "steelblue", linewidth = 0.6) +
+  geom_sf_text(data = df_joined, aes(label = name),
+               size = 1.8) +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue",
+                       midpoint = 100,
+                       na.value = "gray80",
+                       name = "% of Median SWE") +
+  coord_sf(xlim = c(-170, -102), ylim = c(30, 72)) +
+  theme_minimal() +
+  labs(title = "Western US HUC4 Watershed Basins - % of Median SWE")
+
+##Observe no values are over 100, which is the midpoint and the median from the last 30 years. 
+```
+
+
+
+
+
+Mutate and Join data:
+
+1.  Combined \<- Median to YTD values to calculate percent
+2.  Combined join with watershed map data
+3.  Watershed map data join with USA map data
+
+Plot:
+
+1.  Create visualization of USA with %SWE per watershed
+2.  Create Hydrograph Visualization
+
+Shiny:
+
+1.  Select State
+2.  Select Watershed
+3.  Display Hydrograph YTD plot
+4.  Return a message detailing if drought is likely
