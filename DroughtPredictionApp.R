@@ -4,6 +4,7 @@ library(bsicons)
 library(ggplot2)
 library(dplyr)
 library(sf)
+library(nhdplusTools)
 library(DT)
 
 # load data
